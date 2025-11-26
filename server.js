@@ -1,131 +1,191 @@
-// --- server.js ---
+// ======================================
+//             SETUP
+// ======================================
+
 const express = require("express");
-const path = require("path");
-const http = require("http");
-const { Server } = require("socket.io");
-const { Telegraf } = require("telegraf");
-require("dotenv").config();
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBAPP_URL = process.env.WEBAPP_URL;
-
-if (!BOT_TOKEN) {
-  console.error("❌ ERROR: BOT_TOKEN missing!");
-  process.exit(1);
-}
-
-if (!WEBAPP_URL) {
-  console.error("❌ ERROR: WEBAPP_URL missing!");
-  process.exit(1);
-}
-
-const bot = new Telegraf(BOT_TOKEN);
-
 const app = express();
+const http = require("http");
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const { Server } = require("socket.io");
+
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static("public"));
 
-// ===== GAME SYSTEM =====
+// ======================================
+//    ХРАНЕНИЕ СОСТОЯНИЯ СЕРВЕРА
+// ======================================
 
-let games = {}; // game storage
+let onlineUsers = {}; // { playerId: { username, socketId } }
 
-function createId() {
-  return Math.random().toString(36).substring(2, 10);
-}
+let games = {}; // { gameId: { players: [], board: [...], turn } }
 
+// ======================================
+//           API ЭНДПОИНТЫ
+// ======================================
+
+// Создать игру
 app.post("/api/create-game", (req, res) => {
   const { playerId } = req.body;
 
-  if (!playerId)
-    return res.status(400).json({ ok: false, error: "playerId missing" });
+  if (!playerId) return res.json({ ok: false, error: "No playerId" });
 
-  const gameId = createId();
+  const gameId = "g_" + Math.random().toString(36).substring(2, 10);
 
   games[gameId] = {
-    p1: playerId,
-    p2: null,
+    gameId,
+    players: [playerId],
     board: ["", "", "", "", "", "", "", "", ""],
-    turn: "X",
-    chat: []
+    turn: playerId
   };
 
-  res.json({ ok: true, gameId });
+  return res.json({ ok: true, gameId });
 });
 
-app.post("/api/join-game", (req, res) => {
-  const { playerId, gameId } = req.body;
+// Пригласить игрока
+app.post("/api/invite-user", (req, res) => {
+  const { playerId, username } = req.body;
 
-  if (!games[gameId])
-    return res.json({ ok: false, error: "game not found" });
+  if (!playerId || !username)
+    return res.json({ ok: false, error: "Bad request" });
 
-  if (games[gameId].p2)
-    return res.json({ ok: false, error: "game full" });
+  // найти онлайн игрока по username
+  let entry = Object.entries(onlineUsers).find(
+    (u) => u[1].username.toLowerCase() === username.toLowerCase()
+  );
 
-  games[gameId].p2 = playerId;
+  if (!entry)
+    return res.json({ ok: false, error: "Пользователь не найден онлайн" });
 
-  res.json({ ok: true });
+  const [friendId, friend] = entry;
+
+  // создать игру
+  const gameId = "g_" + Math.random().toString(36).substring(2, 10);
+
+  games[gameId] = {
+    gameId,
+    players: [playerId, friendId],
+    board: ["", "", "", "", "", "", "", "", ""],
+    turn: playerId // приглашавший ходит первым
+  };
+
+  // отправить приглашение другу
+  io.to(friend.socketId).emit("invite", {
+    from: onlineUsers[playerId].username,
+    gameId
+  });
+
+  return res.json({ ok: true });
 });
 
-// ===== SOCKET IO =====
+// ======================================
+//              SOCKET.IO
+// ======================================
 
 io.on("connection", (socket) => {
-  socket.on("join", (gameId) => {
-    socket.join(gameId);
-  });
+  const { playerId, username } = socket.handshake.query;
 
-  socket.on("move", ({ gameId, index, symbol }) => {
-    if (!games[gameId]) return;
-
-    games[gameId].board[index] = symbol;
-    games[gameId].turn = symbol === "X" ? "O" : "X";
-
-    io.to(gameId).emit("update", games[gameId]);
-  });
-
-  socket.on("chat", ({ gameId, user, message }) => {
-    if (!games[gameId]) return;
-
-    const msg = { user, message };
-    games[gameId].chat.push(msg);
-
-    io.to(gameId).emit("chat", msg);
-  });
-});
-
-// ===== BOT =====
-
-bot.start((ctx) => {
-  ctx.reply("Добро пожаловать!", {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: "Открыть игру", web_app: { url: WEBAPP_URL } }
-      ]]
-    }
-  });
-});
-
-bot.on("text", (ctx) => {
-  if (ctx.message.text.startsWith("/invite ")) {
-    const gameId = ctx.message.text.replace("/invite ", "");
-
-    ctx.reply(
-      "Вас пригласили в игру!", {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "Присоединиться", web_app: { url: WEBAPP_URL + "?gameId=" + gameId } }
-          ]]
-        }
-      }
-    );
+  if (playerId) {
+    onlineUsers[playerId] = {
+      socketId: socket.id,
+      username: username || "player"
+    };
   }
+
+  console.log("Игрок подключился:", playerId, username);
+
+  // -----------------------------
+  // Игрок принимает приглашение
+  // -----------------------------
+  socket.on("invite-accepted", ({ gameId, invitedId }) => {
+    const game = games[gameId];
+    if (!game) return;
+
+    // уведомить приглашавшего
+    const inviter = game.players[0];
+
+    io.to(onlineUsers[inviter].socketId).emit("invite-response", {
+      accepted: true,
+      game
+    });
+
+    // создать комнату
+    socket.join(gameId);
+    io.to(onlineUsers[inviter].socketId).socketsJoin(gameId);
+
+    // уведомить приглашённого — запустить игру
+    io.to(onlineUsers[invitedId].socketId).emit("start-after-accept", {
+      game
+    });
+  });
+
+  // -----------------------------
+  // Игрок отклонил приглашение
+  // -----------------------------
+  socket.on("invite-rejected", ({ gameId }) => {
+    const game = games[gameId];
+    if (!game) return;
+
+    const inviter = game.players[0];
+
+    io.to(onlineUsers[inviter].socketId).emit("invite-response", {
+      accepted: false
+    });
+
+    delete games[gameId];
+  });
+
+  // -----------------------------
+  // Игрок делает ход
+  // -----------------------------
+  socket.on("make-move", ({ gameId, playerId, index }) => {
+    const game = games[gameId];
+    if (!game) return;
+
+    // не его ход
+    if (game.turn !== playerId) return;
+
+    // клетка занята
+    if (game.board[index]) return;
+
+    const symbol = game.players[0] === playerId ? "X" : "O";
+    game.board[index] = symbol;
+
+    // смена хода
+    game.turn = game.players.find((p) => p !== playerId);
+
+    // обновить доску у всех игроков в комнате
+    io.to(gameId).emit("update-board", {
+      board: game.board,
+      turn: game.turn
+    });
+  });
+
+  // -----------------------------
+  // Чат в игре
+  // -----------------------------
+  socket.on("chat", ({ gameId, playerId, msg }) => {
+    io.to(gameId).emit("chat", { playerId, msg });
+  });
+
+  // -----------------------------
+  // Отключение игрока
+  // -----------------------------
+  socket.on("disconnect", () => {
+    console.log("Игрок отключился:", playerId);
+
+    if (playerId) delete onlineUsers[playerId];
+  });
 });
 
-bot.launch();
+// ======================================
+//            START SERVER
+// ======================================
 
-// ===== START =====
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log("Server running on " + PORT));
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log("Server started on port", PORT);
+});
