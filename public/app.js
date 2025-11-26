@@ -1,151 +1,254 @@
-const socket = io();
-let tg = window.Telegram?.WebApp;
+// ===========================
+//     Telegram MiniApp
+// ===========================
+
+const tg = window.Telegram?.WebApp;
+tg?.expand();
+
+let playerId =
+  tg?.initDataUnsafe?.user?.id ||
+  "user_" + Math.random().toString(36).substring(2);
+
+let username =
+  tg?.initDataUnsafe?.user?.username ||
+  "user" + Math.floor(Math.random() * 9999);
+
+// ===========================
+//        SOCKET.IO
+// ===========================
+const socket = io({
+  query: {
+    playerId,
+    username
+  }
+});
+
+// ===========================
+//        DOM ELEMENTS
+// ===========================
 
 const menu = document.getElementById("menu");
 const inviteBlock = document.getElementById("invite-block");
 const gameBlock = document.getElementById("game");
+
 const board = document.getElementById("board");
 const status = document.getElementById("status");
 
-let playerId = tg?.initDataUnsafe?.user?.id || "user" + Math.random();
+// приглашения
+const invitePanel = document.getElementById("invite-panel");
+const inviteText = document.getElementById("invite-text");
+const acceptBtn = document.getElementById("accept-invite");
+const rejectBtn = document.getElementById("reject-invite");
+
+// чат
+const chatBox = document.getElementById("chat-box");
+const chatInput = document.getElementById("chat-input");
+const chatSend = document.getElementById("chat-send");
+
 let gameId = null;
 
-// ======================== МЕНЮ ========================
+// ===========================
+//        MENU BUTTONS
+// ===========================
 
 document.getElementById("play-ai").onclick = () => {
-    startLocalAiGame();
+  startLocalAiGame();
 };
 
 document.getElementById("play-friend").onclick = () => {
-    menu.classList.add("hidden");
-    inviteBlock.classList.remove("hidden");
+  menu.classList.add("hidden");
+  inviteBlock.classList.remove("hidden");
 };
 
-// кнопка Назад
 document.getElementById("invite-back").onclick = () => {
-    inviteBlock.classList.add("hidden");
-    menu.classList.remove("hidden");
+  inviteBlock.classList.add("hidden");
+  menu.classList.remove("hidden");
 };
 
-// =================== СОЗДАНИЕ ССЫЛКИ ПРИГЛАШЕНИЯ ===================
+document.getElementById("exit-menu").onclick = () => {
+  location.reload();
+};
+
+// ===========================
+//  GENERATE GAME LINK
+// ===========================
 
 document.getElementById("generate-link").onclick = async () => {
-    let res = await fetch("/api/create-game", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerId })
-    });
-    let data = await res.json();
+  let res = await fetch("/api/create-game", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ playerId })
+  });
 
-    if (!data.ok) return alert("Ошибка: " + data.error);
+  let data = await res.json();
 
-    gameId = data.gameId;
+  if (!data.ok) return alert("Ошибка: " + data.error);
 
-    const link = `${window.location.origin}?game=${gameId}`;
-    document.getElementById("generated-link").innerText = link;
-    document.getElementById("generated-link").classList.remove("hidden");
+  gameId = data.gameId;
+
+  const link = `${window.location.origin}?game=${gameId}`;
+  const linkEl = document.getElementById("generated-link");
+
+  linkEl.innerText = link;
+  linkEl.classList.remove("hidden");
 };
 
-// =================== ИГРА С ДРУГОМ ===================
+// ===========================
+//   INVITE BY USERNAME
+// ===========================
 
 document.getElementById("send-invite").onclick = async () => {
-    let username = document.getElementById("friend-username").value.trim();
-    if (!username) return;
+  let friend = document.getElementById("friend-username").value.trim();
+  if (!friend) return alert("Введите username");
 
-    await fetch("/api/invite-user", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerId, username })
-    });
+  let res = await fetch("/api/invite-user", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ playerId, username: friend })
+  });
 
-    alert("Приглашение отправлено");
+  let data = await res.json();
+
+  if (!data.ok) return alert("Ошибка: " + data.error);
+
+  alert("Приглашение отправлено!");
 };
 
+// ===========================
+//      START ONLINE GAME
+// ===========================
+
 function startGameOnline(game) {
-    menu.classList.add("hidden");
-    inviteBlock.classList.add("hidden");
-    gameBlock.classList.remove("hidden");
+  menu.classList.add("hidden");
+  inviteBlock.classList.add("hidden");
+  invitePanel.classList.add("hidden");
+  gameBlock.classList.remove("hidden");
 
-    board.innerHTML = "";
+  gameId = game.gameId || gameId;
 
-    for (let i = 0; i < 9; i++) {
-        let cell = document.createElement("div");
-        cell.className = "cell";
-        cell.dataset.idx = i;
+  board.innerHTML = "";
 
-        cell.onclick = () => {
-            socket.emit("make-move", { gameId, playerId, index: i });
-        };
+  for (let i = 0; i < 9; i++) {
+    let cell = document.createElement("div");
+    cell.className = "cell";
+    cell.dataset.index = i;
 
-        board.appendChild(cell);
-    }
+    cell.onclick = () => {
+      socket.emit("make-move", {
+        gameId,
+        playerId,
+        index: i
+      });
+    };
+
+    board.appendChild(cell);
+  }
 }
 
-// ======================== ИГРА ПРОТИВ AI ========================
+// ===========================
+//     GAME VS AI
+// ===========================
 
 function startLocalAiGame() {
-    gameId = "ai";
-    menu.classList.add("hidden");
-    gameBlock.classList.remove("hidden");
+  menu.classList.add("hidden");
+  gameBlock.classList.remove("hidden");
 
-    board.innerHTML = "";
+  board.innerHTML = "";
 
-    let cells = ["", "", "", "", "", "", "", "", ""];
+  let cells = ["", "", "", "", "", "", "", "", ""];
 
-    for (let i = 0; i < 9; i++) {
-        let cell = document.createElement("div");
-        cell.className = "cell";
+  function render() {
+    [...board.children].forEach((cell, idx) => {
+      cell.textContent = cells[idx];
+    });
+  }
 
-        cell.onclick = () => {
-            if (cells[i]) return;
-            cells[i] = "X";
-            render();
+  for (let i = 0; i < 9; i++) {
+    let cell = document.createElement("div");
+    cell.className = "cell";
 
-            let ai = cells.indexOf("");
-            if (ai !== -1) {
-                cells[ai] = "O";
-                render();
-            }
-        };
+    cell.onclick = () => {
+      if (cells[i]) return;
+      cells[i] = "X";
+      render();
 
-        board.appendChild(cell);
-    }
+      let ai = cells.indexOf("");
+      if (ai !== -1) {
+        cells[ai] = "O";
+        render();
+      }
+    };
 
-    function render() {
-        [...board.children].forEach((c, i) => c.textContent = cells[i]);
-    }
+    board.appendChild(cell);
+  }
 }
 
-// ======================== SOCKET.IO ========================
+// ===========================
+//     SOCKET EVENTS
+// ===========================
 
-socket.on("game-start", (data) => {
-    gameId = data.gameId;
+// Приглашение получено
+socket.on("invite", ({ from, gameId: g }) => {
+  gameId = g;
+  inviteText.innerText = `Вас приглашает @${from}`;
+  invitePanel.classList.remove("hidden");
+});
+
+// Принять приглашение
+acceptBtn.onclick = () => {
+  socket.emit("invite-accepted", {
+    gameId,
+    invitedId: playerId
+  });
+  invitePanel.classList.add("hidden");
+};
+
+// Отклонить приглашение
+rejectBtn.onclick = () => {
+  socket.emit("invite-rejected", {
+    gameId,
+    invitedId: playerId
+  });
+  invitePanel.classList.add("hidden");
+};
+
+// Приглашавший получает ответ
+socket.on("invite-response", (data) => {
+  if (data.accepted) {
+    alert("Игрок принял приглашение!");
     startGameOnline(data.game);
+  } else {
+    alert("Игрок отклонил приглашение.");
+  }
 });
 
+// Приглашённый заходит в игру
+socket.on("start-after-accept", (data) => {
+  startGameOnline(data.game);
+});
+
+// Обновить доску
 socket.on("update-board", (data) => {
-    [...board.children].forEach((c, i) => {
-        c.textContent = data.board[i];
-    });
-    status.textContent = data.turn === playerId ? "Ваш ход" : "Ход соперника";
+  [...board.children].forEach((cell, i) => {
+    cell.textContent = data.board[i];
+  });
+
+  status.innerText = data.turn === playerId ? "Ваш ход" : "Ход соперника";
 });
 
-// ======================== ЧАТ ========================
+// ===========================
+//          CHAT
+// ===========================
 
-document.getElementById("chat-send").onclick = () => {
-    let msg = document.getElementById("chat-input").value;
-    if (!msg) return;
+chatSend.onclick = () => {
+  let msg = chatInput.value.trim();
+  if (!msg) return;
 
-    socket.emit("chat", { gameId, playerId, msg });
-    document.getElementById("chat-input").value = "";
+  socket.emit("chat", { gameId, playerId, msg });
+  chatInput.value = "";
 };
 
 socket.on("chat", (data) => {
-    let box = document.getElementById("chat-box");
-    box.innerHTML += `<div><b>${data.playerId}:</b> ${data.msg}</div>`;
-    box.scrollTop = box.scrollHeight;
+  chatBox.innerHTML += `<div><b>${data.playerId}:</b> ${data.msg}</div>`;
+  chatBox.scrollTop = chatBox.scrollHeight;
 });
-
-// ======================== ВЫЙТИ ========================
-
-document.getElementById("exit-menu").onclick = () => location.reload();
