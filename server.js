@@ -1,17 +1,21 @@
 // --- server.js ---
-// Рабочий backend для Telegram Mini App + Telegraf + Express + WebSocket
-
 const express = require("express");
 const path = require("path");
 const http = require("http");
 const { Server } = require("socket.io");
 const { Telegraf } = require("telegraf");
-
 require("dotenv").config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const WEBAPP_URL = process.env.WEBAPP_URL;
+
 if (!BOT_TOKEN) {
-  console.error("❌ ERROR: BOT_TOKEN is missing in environment variables");
+  console.error("❌ ERROR: BOT_TOKEN missing!");
+  process.exit(1);
+}
+
+if (!WEBAPP_URL) {
+  console.error("❌ ERROR: WEBAPP_URL missing!");
   process.exit(1);
 }
 
@@ -19,38 +23,26 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-// Serve frontend
-app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
-// ----------------------------
-//    МЕХАНИКА ИГРЫ
-// ----------------------------
-let games = {};  
-// games[id] = {
-//     p1: telegramId,
-//     p2: telegramId,
-//     board: ["", "", "", "", "", "", "", "", ""],
-//     turn: "X",
-//     chat: []
-// }
+// ===== GAME SYSTEM =====
 
-// Генерация ID игры
-function makeGameId() {
+let games = {}; // game storage
+
+function createId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-// ----------------------------
-//   API: Создать игру
-// ----------------------------
 app.post("/api/create-game", (req, res) => {
   const { playerId } = req.body;
 
-  const gameId = makeGameId();
+  if (!playerId)
+    return res.status(400).json({ ok: false, error: "playerId missing" });
+
+  const gameId = createId();
 
   games[gameId] = {
     p1: playerId,
@@ -60,27 +52,25 @@ app.post("/api/create-game", (req, res) => {
     chat: []
   };
 
-  res.json({ gameId });
+  res.json({ ok: true, gameId });
 });
 
-// ----------------------------
-//   API: Подключиться к игре
-// ----------------------------
 app.post("/api/join-game", (req, res) => {
   const { playerId, gameId } = req.body;
 
-  if (!games[gameId]) return res.json({ ok: false, error: "Game not found" });
-  if (games[gameId].p2 !== null)
-    return res.json({ ok: false, error: "Game already full" });
+  if (!games[gameId])
+    return res.json({ ok: false, error: "game not found" });
+
+  if (games[gameId].p2)
+    return res.json({ ok: false, error: "game full" });
 
   games[gameId].p2 = playerId;
 
   res.json({ ok: true });
 });
 
-// ----------------------------
-//   WebSocket: игра и чат
-// ----------------------------
+// ===== SOCKET IO =====
+
 io.on("connection", (socket) => {
   socket.on("join", (gameId) => {
     socket.join(gameId);
@@ -105,55 +95,37 @@ io.on("connection", (socket) => {
   });
 });
 
-// ----------------------------
-//   Telegram Bot Logic
-// ----------------------------
+// ===== BOT =====
+
 bot.start((ctx) => {
-  ctx.reply("Добро пожаловать! Нажмите кнопку ниже чтобы открыть игру.", {
+  ctx.reply("Добро пожаловать!", {
     reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: "Открыть мини-приложение",
-            web_app: {
-              url: process.env.WEBAPP_URL
-            }
-          }
-        ]
-      ]
+      inline_keyboard: [[
+        { text: "Открыть игру", web_app: { url: WEBAPP_URL } }
+      ]]
     }
   });
 });
 
-// Получение и обработка приглашений
 bot.on("text", (ctx) => {
   if (ctx.message.text.startsWith("/invite ")) {
-    const gameId = ctx.message.text.replace("/invite ", "").trim();
+    const gameId = ctx.message.text.replace("/invite ", "");
 
     ctx.reply(
-      `Ваш друг пригласил вас в игру!\nНажмите ниже чтобы подключиться.`,
-      {
+      "Вас пригласили в игру!", {
         reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "Войти в игру",
-                web_app: { url: process.env.WEBAPP_URL + "?gameId=" + gameId }
-              }
-            ]
-          ]
+          inline_keyboard: [[
+            { text: "Присоединиться", web_app: { url: WEBAPP_URL + "?gameId=" + gameId } }
+          ]]
         }
       }
     );
   }
 });
 
-// Запуск бота
 bot.launch();
-console.log("Bot is running...");
 
-// Запуск сервера
+// ===== START =====
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () =>
-  console.log("Server running on port " + PORT)
-);
+server.listen(PORT, () => console.log("Server running on " + PORT));
