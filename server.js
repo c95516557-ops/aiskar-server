@@ -1,4 +1,5 @@
 // server.js
+});
 
 
 // Serve index (frontend)
