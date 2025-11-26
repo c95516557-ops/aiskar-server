@@ -1,119 +1,159 @@
-// server.js
-require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const path = require('path');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const shortid = require('shortid');
-const TelegramBotHelper = require('./telegramBot'); // optional helper (uses
-BOT_TOKEN)
-const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+// --- server.js ---
+// Рабочий backend для Telegram Mini App + Telegraf + Express + WebSocket
+
+const express = require("express");
+const path = require("path");
+const http = require("http");
+const { Server } = require("socket.io");
+const { Telegraf } = require("telegraf");
+
+require("dotenv").config();
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error("❌ ERROR: BOT_TOKEN is missing in environment variables");
+  process.exit(1);
+}
+
+const bot = new Telegraf(BOT_TOKEN);
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-cors: { origin: '*' }
+  cors: { origin: "*" }
+});
+
+// Serve frontend
+app.use(express.static(path.join(__dirname, "public")));
+app.use(express.json());
+
+// ----------------------------
+//    МЕХАНИКА ИГРЫ
+// ----------------------------
+let games = {};  
+// games[id] = {
+//     p1: telegramId,
+//     p2: telegramId,
+//     board: ["", "", "", "", "", "", "", "", ""],
+//     turn: "X",
+//     chat: []
+// }
+
+// Генерация ID игры
+function makeGameId() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
+// ----------------------------
+//   API: Создать игру
+// ----------------------------
+app.post("/api/create-game", (req, res) => {
+  const { playerId } = req.body;
+
+  const gameId = makeGameId();
+
+  games[gameId] = {
+    p1: playerId,
+    p2: null,
+    board: ["", "", "", "", "", "", "", "", ""],
+    turn: "X",
+    chat: []
+  };
+
+  res.json({ gameId });
+});
+
+// ----------------------------
+//   API: Подключиться к игре
+// ----------------------------
+app.post("/api/join-game", (req, res) => {
+  const { playerId, gameId } = req.body;
+
+  if (!games[gameId]) return res.json({ ok: false, error: "Game not found" });
+  if (games[gameId].p2 !== null)
+    return res.json({ ok: false, error: "Game already full" });
+
+  games[gameId].p2 = playerId;
+
+  res.json({ ok: true });
+});
+
+// ----------------------------
+//   WebSocket: игра и чат
+// ----------------------------
+io.on("connection", (socket) => {
+  socket.on("join", (gameId) => {
+    socket.join(gameId);
   });
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
-// In-memory store (для простоты). Для production — Redis/DB.
-const games = {}; // { [gameId]: { players: [username1, username2], board:
-Array(9), turn: 'X'|'O', chat: [] } }
-// API: создать игру
-app.post('/api/create-game', (req, res) => {
-const { creator } = req.body || {};
-const gameId = shortid.generate();
-games[gameId] = {
-id: gameId,
-players: [creator || null],
-board: Array(9).fill(null),
-turn: 'X',
-status: 'waiting', // waiting | playing | finished
-chat: []
-};
-res.json({ ok: true, gameId, url: `${BASE_URL}/?gameId=${gameId}` });
+
+  socket.on("move", ({ gameId, index, symbol }) => {
+    if (!games[gameId]) return;
+
+    games[gameId].board[index] = symbol;
+    games[gameId].turn = symbol === "X" ? "O" : "X";
+
+    io.to(gameId).emit("update", games[gameId]);
+  });
+
+  socket.on("chat", ({ gameId, user, message }) => {
+    if (!games[gameId]) return;
+
+    const msg = { user, message };
+    games[gameId].chat.push(msg);
+
+    io.to(gameId).emit("chat", msg);
+  });
 });
-// API: invite via bot (optional)
-app.post('/api/invite', async (req, res) => {
-const { toUsername, fromUsername, gameId } = req.body || {};
-if (!toUsername || !gameId) return res.status(400).json({ ok: false,
-error: 'toUsername and gameId required' });
-try {
-const bot = TelegramBotHelper();
-const message = `Вам предложена игра в Tic-Tac-Toe от @${fromUsername ||
-'anonymous'}\nОткрыть: ${BASE_URL}/?gameId=${gameId}`;
-// Попытка отправки по username — работает только если пользователь уже
-писал боту
-await bot.sendToUsername(toUsername, message);
-res.json({ ok: true });
-} catch (err) {
-console.error('invite error', err.message || err);
-res.status(500).json({ ok: false, error: err.message || String(err) });
-}
+
+// ----------------------------
+//   Telegram Bot Logic
+// ----------------------------
+bot.start((ctx) => {
+  ctx.reply("Добро пожаловать! Нажмите кнопку ниже чтобы открыть игру.", {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Открыть мини-приложение",
+            web_app: {
+              url: process.env.WEBAPP_URL
+            }
+          }
+        ]
+      ]
+    }
+  });
 });
-// Serve index (frontend)
-app.get('*', (req, res) => {
-res.sendFile(path.join(__dirname, 'public', 'index.html'));
+
+// Получение и обработка приглашений
+bot.on("text", (ctx) => {
+  if (ctx.message.text.startsWith("/invite ")) {
+    const gameId = ctx.message.text.replace("/invite ", "").trim();
+
+    ctx.reply(
+      `Ваш друг пригласил вас в игру!\nНажмите ниже чтобы подключиться.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Войти в игру",
+                web_app: { url: process.env.WEBAPP_URL + "?gameId=" + gameId }
+              }
+            ]
+          ]
+        }
+      }
+    );
+  }
 });
-// Socket.IO: real-time game + chat
-io.on('connection', (socket) => {
-console.log('socket connected', socket.id);
-socket.on('join-game', ({ gameId, username }) => {
-if (!gameId) return socket.emit('error', 'gameId required');
-socket.join(`game:${gameId}`);
-const g = games[gameId];
-if (!g) return socket.emit('error', 'game not found');
-// добавляем игрока, если его ещё нет
-if (!g.players.includes(username)) {
-if (g.players.length < 2) g.players.push(username);
-}
-// синхронизируем состояние
-io.to(`game:${gameId}`).emit('game-state', g);
-});
-socket.on('make-move', ({ gameId, index, symbol }) => {
-const g = games[gameId];
-if (!g) return socket.emit('error', 'game not found');
-if (g.board[index] !== null) return; // invalid
-g.board[index] = symbol;
-// switch turn
-g.turn = g.turn === 'X' ? 'O' : 'X';
-// check win/draw
-const winner = checkWinner(g.board);
-if (winner) {
-g.status = 'finished';
-g.winner = winner;
-} else if (g.board.every(cell => cell !== null)) {
-g.status = 'finished';
-g.winner = null; // draw
-} else {
-g.status = 'playing';
-}
-io.to(`game:${gameId}`).emit('game-state', g);
-});
-socket.on('send-chat', ({ gameId, username, text }) => {
-const g = games[gameId];
-if (!g) return;
-const msg = { id: Date.now(), from: username, text };
-g.chat.push(msg);
-io.to(`game:${gameId}`).emit('chat-message', msg);
-});
-socket.on('disconnect', () => {
-// опционально — можно пометить игрока как offline
-});
-});
-function checkWinner(b) {
-const lines = [
-[0,1,2],[3,4,5],[6,7,8],
-[0,3,6],[1,4,7],[2,5,8],
-[0,4,8],[2,4,6]
-];
-for (const [a,bIdx,c] of lines) {
-if (b[a] && b[a] === b[bIdx] && b[a] === b[c]) return b[a];
-}
-return null;
-}
-server.listen(PORT, () => console.log(`Server listening on ${PORT};
-BASE_URL=${BASE_URL}`));
+
+// Запуск бота
+bot.launch();
+console.log("Bot is running...");
+
+// Запуск сервера
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () =>
+  console.log("Server running on port " + PORT)
+);
