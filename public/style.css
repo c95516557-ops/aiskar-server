@@ -81,3 +81,12 @@ input {
   margin: 5px;
   border: none;
 }
+#invite-panel {
+  background: #222;
+  border: 1px solid #444;
+  padding: 20px;
+  width: 300px;
+  margin: 20px auto;
+  border-radius: 12px;
+}
+
