@@ -1,130 +1,78 @@
-<!DOCTYPE html>
-<html lang="ru">
+<!-- public/index.html -->
+<!doctype html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AiSKAR Tic-Tac-Toe</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script> <!-- Socket.io клиент -->
-    <style> /* Твой старый CSS — без изменений */ </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AiSKAR — TicTacToe</title>
+<style>
+body { font-family: Arial, sans-serif; background:#f3f4f6; margin:0; padding:0; }
+.container{max-width:480px;margin:24px auto;background:white;padding:16px;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.08)}
+.center{text-align:center}
+button{padding:10px 14px;border-radius:8px;border:none;background:#2563eb;color:white;margin:6px}
+.board{display:grid;grid-template-columns:repeat(3,80px);gap:6px;justify-content:center;margin:12px}
+.cell{width:80px;height:80px;display:flex;align-items:center;justify-content:center;font-size:36px;background:#eef2ff;border-radius:8px;cursor:pointer}
+.chat{border-top:1px solid #eee;padding-top:10px;margin-top:10px}
+.chat-list{max-height:160px;overflow:auto;margin-bottom:8px}
+</style>
 </head>
 <body>
-    <!-- Твои экраны: menu, game — без изменений -->
-    <div id="menu" class="screen">
-        <div class="logo">AiSKAR</div>
-        <h1>Крестики-нолики</h1>
-        <button class="primary" onclick="startVsAI()">Играть против AiSKAR</button>
-        <button onclick="startWithFriend()">Играть с другом (через бота /invite)</button>
-    </div>
-
-    <div id="game" class="screen hidden">
-        <button class="back-btn" onclick="backToMenu()">←</button>
-        <div class="status" id="status">Подключаемся...</div>
-        <div class="board" id="board"></div>
-        <div id="chatBox">
-            <div class="chat" id="chat"></div>
-            <div class="chat-input">
-                <input type="text" id="msgInput" placeholder="Сообщение другу..." maxlength="100">
-                <button onclick="sendMessage()">Отправить</button>
-            </div>
-        </div>
-    </div>
-
-<script>
-    const tg = window.Telegram.WebApp;
-    tg.ready(); tg.expand();
-
-    let socket;
-    let gameId = null;
-    let mySymbol = 'X';
-    let board = Array(9).fill(null);
-    let currentTurn = 'X';
-
-    // Парсим gameId из URL или Telegram initData (для /start=game_xxx)
-    const urlParams = new URLSearchParams(window.location.search);
-    gameId = urlParams.get('game') || tg.initDataUnsafe.start_param?.split('_')[1];
-    const SERVER_URL = 'https://your-app.onrender.com'; // Твоя Render ссылка
-
-    if (gameId) {
-        socket = io(SERVER_URL);
-        socket.emit('joinGame', { gameId, userId: tg.initDataUnsafe.user.id, username: tg.initDataUnsafe.user.username });
-
-        socket.on('gameState', (data) => {
-            board = data.board;
-            currentTurn = data.turn;
-            mySymbol = data.mySymbol;
-            renderBoard();
-            updateStatus();
-            loadChat(data.chat);
-        });
-
-        socket.on('moveMade', (data) => {
-            board = data.board;
-            currentTurn = data.turn;
-            renderBoard();
-            updateStatus();
-        });
-
-        socket.on('playerJoined', (data) => {
-            document.getElementById('status').textContent = `${data.username} присоединился как ${data.symbol}`;
-        });
-
-        socket.on('gameOver', (data) => {
-            document.getElementById('status').textContent = data.winner === 'draw' ? 'Ничья!' : `${data.winner} победил!`;
-            disableBoard();
-        });
-
-        socket.on('chatMessage', (msg) => {
-            addToChat(msg);
-        });
-
-        // Vs AI режим — без изменений (локальный minimax)
-        if (urlParams.get('mode') === 'ai') {
-            // Твой старый код aiMove
-        }
-    }
-
-    function startWithFriend() {
-        // Отправь в чат: "Скопируй /invite @друг в боте"
-        tg.showAlert('В боте напиши /invite @username_друга — он получит приглашение!');
-        // Или редирект на bot: tg.openTelegramLink(`https://t.me/aiskar_game_bot?start=invite`);
-    }
-
-    // makeMove: socket.emit('makeMove', { gameId, pos });
-    function makeMove(i) {
-        if (board[i] || currentTurn !== mySymbol) return;
-        socket.emit('makeMove', { gameId, pos: i });
-    }
-
-    function sendMessage() {
-        const input = document.getElementById('msgInput');
-        const msg = input.value.trim();
-        if (!msg) return;
-        socket.emit('sendChat', { gameId, msg, username: tg.initDataUnsafe.user.username });
-        input.value = '';
-    }
-
-    function addToChat({ username, msg }) {
-        const chat = document.getElementById('chat');
-        chat.innerHTML += `<div><b>${username}:</b> ${msg}</div>`;
-        chat.scrollTop = chat.scrollHeight;
-    }
-
-    function loadChat(chatHistory) {
-        const chat = document.getElementById('chat');
-        chat.innerHTML = chatHistory.map(m => `<div><b>${m.username}:</b> ${m.msg}</div>`).join('');
-    }
-
-    // renderBoard, updateStatus, checkWin — твой старый код
-    // ... (скопируй из предыдущей версии)
-
-    // Если gameId нет — покажи меню
-    if (!gameId) {
-        document.getElementById('menu').classList.remove('hidden');
-    } else {
-        document.getElementById('game').classList.remove('hidden');
-        document.getElementById('chatBox').classList.remove('hidden');
-    }
-</script>
+<div id="root"></div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/bundle.js"></script>
 </body>
 </html>
+// public/bundle.js — минимальный React-like код без билда (чтобы можно было запустить сразу)
+// Для простоты это чистый JS + минимальный "view" без зависимости. В production рекомендую собрать полноценный React.
+(function(){
+const socket = io();
+
+
+const qs = Object.fromEntries(new URLSearchParams(window.location.search));
+let gameId = qs.gameId || null;
+let username = qs.user || (Math.random().toString(36).slice(2,9));
+
+
+// простой state
+let state = { view: 'menu', game: null, localSymbol: 'X' };
+
+
+// DOM helpers
+function el(tag, props, ...children){
+const e = document.createElement(tag);
+if (props) Object.entries(props).forEach(([k,v]) => {
+if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+else e.setAttribute(k, v);
+});
+children.forEach(c => { if (typeof c === 'string') e.appendChild(document.createTextNode(c)); else e.appendChild(c); });
+return e;
+}
+
+
+function render(){
+const root = document.getElementById('root');
+root.innerHTML = '';
+const container = el('div',{class:'container'});
+const header = el('div',{class:'center'}, el('h2',null,'AiSKAR'));
+container.appendChild(header);
+
+
+if (state.view === 'menu'){
+const playAiBtn = el('button', {onclick: () => { state.view='ai'; render(); }}, 'Играть против AiSKAR');
+const playFriendBtn = el('button', {onclick: createGame}, 'Играть с другом');
+container.appendChild(el('div', {class:'center'}, playAiBtn, playFriendBtn));
+container.appendChild(el('div',{class:'center'}, el('small', null, 'Внизу — кнопка выйти в меню будет видна в играх')));
+}
+
+
+if (state.view === 'ai'){
+container.appendChild(renderBoard(true));
+const back = el('div', {class:'center'}, el('button', {onclick: ()=>{ state.view='menu'; state.game=null; render(); }}, 'Выйти в меню'));
+container.appendChild(back);
+}
+
+
+if (state.view === 'friend' && state.game){
+container.appendChild(renderBoard(false));
+// chat
+const chatBox = el('div
