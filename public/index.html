@@ -1,35 +1,50 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <title>AiSKAR – Крестики Нолики</title>
+  <meta charset="UTF-8">
+  <title>AiSKAR — Крестики-нолики</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
 
-<div class="container">
   <h1>AiSKAR</h1>
-
-  <button id="play-ai">Играть против AiSKAR</button>
-  <button id="play-friend">Играть с другом</button>
-
-  <div id="game" class="hidden">
-    <h2 id="status"></h2>
-
-    <div class="board" id="board"></div>
-
-    <div id="chat">
-      <div id="messages"></div>
-      <input id="msgInput" placeholder="напишите сообщение...">
-      <button id="sendMsg">Отправить</button>
-    </div>
-
-    <button id="exit">Выйти в меню</button>
+  
+  <div id="menu">
+    <button class="btn" id="play-ai">Играть против AiSKAR</button>
+    <button class="btn" id="play-friend">Играть с другом</button>
   </div>
-</div>
 
-<script src="app.js"></script>
+  <!-- Блок приглашения друга -->
+  <div id="invite-block" class="hidden">
+    <p>Выберите способ:</p>
+
+    <button id="generate-link" class="btn small">Создать ссылку-приглашение</button>
+    <p id="generated-link" class="link hidden"></p>
+
+    <p>или пригласить по username:</p>
+    <input id="friend-username" placeholder="username друга">
+    <button id="send-invite" class="btn small">Отправить приглашение</button>
+
+    <button class="btn back" id="invite-back">Назад</button>
+  </div>
+
+  <!-- ИГРОВОЕ ПОЛЕ -->
+  <div id="game" class="hidden">
+      <div id="board"></div>
+
+      <div id="status"></div>
+
+      <div id="chat">
+        <div id="chat-box"></div>
+        <input id="chat-input" placeholder="напишите сообщение...">
+        <button id="chat-send" class="btn small">Отправить</button>
+      </div>
+
+      <button class="btn back" id="exit-menu">Выйти в меню</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="app.js"></script>
+
 </body>
 </html>
